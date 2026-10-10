@@ -3,12 +3,12 @@
 import time
 from typing import List, Optional, Tuple
 
+from prompt_manifold.adapters import AdapterRegistry, get_default_registry
 from prompt_manifold.core.intent import IntentExtractor
 from prompt_manifold.schemas import (
     EnhancedPromptResult,
     ExpansionConfig,
     IntentSlots,
-    ManifoldTarget,
     MediumType,
 )
 
@@ -20,8 +20,13 @@ class PromptManifoldEngine:
     matching the training manifold of the target foundation model.
     """
 
-    def __init__(self, extractor: Optional[IntentExtractor] = None):
+    def __init__(
+        self,
+        extractor: Optional[IntentExtractor] = None,
+        registry: Optional[AdapterRegistry] = None,
+    ):
         self.extractor = extractor or IntentExtractor()
+        self.registry = registry or get_default_registry()
 
     def enhance(
         self,
@@ -168,94 +173,30 @@ class PromptManifoldEngine:
         self, slots: IntentSlots, cfg: ExpansionConfig
     ) -> Tuple[str, dict]:
         """Synthesize final prompt adapted to target foundation model syntax."""
-        target = cfg.target_model
-        meta = {"target_model": target.value}
-
-        clauses = []
-
-        # 1. Primary Subject Clause
-        subject_desc = slots.subject
-        if slots.subject_attributes and cfg.detail_level >= 2:
-            attr_str = ", ".join(slots.subject_attributes[:3])
-            subject_desc = f"{slots.subject} featuring {attr_str}"
-        clauses.append(subject_desc)
-
-        # 2. Environment Clause
-        if slots.environment and cfg.detail_level >= 2:
-            clauses.append(f"situated in a {slots.environment}")
-
-        # 3. Lighting Clause
-        if slots.lighting and cfg.detail_level >= 2:
-            clauses.append(f"illuminated by {slots.lighting}")
-
-        # 4. Optical Framing / Camera
-        if slots.camera_framing and cfg.detail_level >= 3:
-            clauses.append(slots.camera_framing)
-
-        # 5. Atmosphere / Color
-        if slots.color_palette and cfg.detail_level >= 3:
-            clauses.append(slots.color_palette)
-
-        if target == ManifoldTarget.FLUX:
-            prompt = (
-                ". ".join(
-                    clause.capitalize() if not clause.startswith("situated") else clause
-                    for clause in clauses
-                )
-                + "."
-            )
-            prompt = prompt.replace("..", ".").replace(" ,", ",").strip()
-            meta["syntax_mode"] = "natural_narrative_prose"
-
-        elif target == ManifoldTarget.SDXL:
-            tokens = [slots.subject]
+        try:
+            adapter = self.registry.get(cfg.target_model)
+            return adapter.format_prompt(slots, cfg)
+        except KeyError:
+            # Fallback formatting if target is not registered
+            clauses = [slots.subject]
             if slots.subject_attributes:
-                tokens.extend(slots.subject_attributes[:2])
+                clauses.append(", ".join(slots.subject_attributes[:3]))
             if slots.environment:
-                tokens.append(slots.environment)
+                clauses.append(f"in {slots.environment}")
             if slots.lighting:
-                tokens.append(slots.lighting)
-            if slots.camera_framing:
-                tokens.append(slots.camera_framing)
-            tokens.append("8k resolution, raw photo, highly detailed, photorealistic")
-            prompt = ", ".join(tokens)
-            meta["syntax_mode"] = "weighted_token_matrix"
-
-        elif target == ManifoldTarget.MIDJOURNEY:
-            core_text = ", ".join(clauses)
-            prompt = f"{core_text} --v 6.1 --style raw --ar 16:9"
-            meta["syntax_mode"] = "midjourney_parameterized"
-
-        elif target == ManifoldTarget.SD3:
-            prompt = ", ".join(clauses) + ", highly detailed photographic render, sharp focus"
-            meta["syntax_mode"] = "t5_clip_hybrid"
-
-        else:
-            prompt = ". ".join(clauses) + "."
-            meta["syntax_mode"] = "standard_distribution"
-
-        return prompt, meta
+                clauses.append(slots.lighting)
+            return ". ".join(clauses) + ".", {"syntax_mode": "fallback_default"}
 
     def _synthesize_negative_prompt(self, slots: IntentSlots, cfg: ExpansionConfig) -> str:
         """Synthesize dual negative prompt constraints."""
-        neg_elements = [
-            "oversaturated", "plastic textures", "deformed anatomy", "blurry",
-            "out of focus", "jpeg compression artifacts", "low quality",
-            "watermark", "signature",
-            "cartoonish" if slots.medium == MediumType.PHOTOGRAPHY else ""
-        ]
-        if slots.explicit_negatives:
-            neg_elements = slots.explicit_negatives + neg_elements
-
-        filtered = []
-        seen = set()
-        for elem in neg_elements:
-            e = elem.strip().lower()
-            if e and e not in seen:
-                seen.add(e)
-                filtered.append(e)
-
-        return ", ".join(filtered)
+        try:
+            adapter = self.registry.get(cfg.target_model)
+            return adapter.synthesize_negative(slots, cfg)
+        except KeyError:
+            base_neg = ["blurry", "low quality", "distorted", "watermark"]
+            if slots.explicit_negatives:
+                base_neg = slots.explicit_negatives + base_neg
+            return ", ".join(dict.fromkeys(base_neg))
 
     def _compute_in_distribution_score(self, prompt: str, slots: IntentSlots) -> float:
         """Estimate in-distribution proximity index based on syntactic token density."""
