@@ -1,0 +1,10 @@
+cff-version: 1.2.0
+message: "If you utilize PromptManifold in research or production AI systems, please cite it as below."
+title: "PromptManifold: Inference-Time Prompt Distribution Alignment and Manifold Projection Engine"
+version: 0.1.0
+date-released: 2026-10-10
+url: "https://github.com/shahriar-ahmed-seam/prompt-manifold"
+license: "Apache-2.0"
+authors:
+  - family-names: "Ahmed"
+    given-names: "Shahriar"
