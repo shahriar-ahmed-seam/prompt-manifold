@@ -1,0 +1,14 @@
+version: "3.8"
+
+services:
+  prompt-manifold:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: promptmanifold/engine:latest
+    container_name: prompt_manifold_service
+    ports:
+      - "8000:8000"
+    environment:
+      - PYTHONUNBUFFERED=1
+    restart: unless-stopped
